@@ -1,0 +1,17 @@
+universe                = vanilla
+executable              = start_pilot.sh
+transfer_input_files    = start_pilot.sh
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT
+output                  = logs/$$(cluster).$$(process).out
+error                   = logs/$$(cluster).$$(process).err
+log                     = logs/cluster.log
+environment             = ${Environment}
+request_cpus            = ${Cores}
+request_memory          = ${Memory}
+request_disk            = ${Disk}
+request_gpus            = 1
++IsTardisPilot          = true
+accounting_group        = tardis
+x509userproxy = /home/tardis/tmp/x509up_u9999
+queue
