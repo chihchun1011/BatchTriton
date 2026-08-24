@@ -1,4 +1,5 @@
 # Gitignore for BatchTriton
+tardis-venv/
 .venv/
 .idea/
 __pycache__/

@@ -2,7 +2,7 @@ pipeline:
   - __type__: cobald.controller.linear.LinearController
     low_utilisation: 0.90
     high_allocation: 0.90
-    rate: 30
+    rate: 5
   - __type__: cobald.decorator.limiter.Limiter
     minimum: 1
   - __type__: cobald.decorator.logger.Logger
@@ -36,6 +36,7 @@ tardis:
       db_file: drone_registry.db
 
   # The OVERLAY pool your Triton job will actually be submitted to
+  # check via condor_status
   BatchSystem:
     adapter: HTCondor
     max_age: 1                                   # re-query condor_status every 1 min
@@ -44,7 +45,7 @@ tardis:
       cpu_ratio: Real(TotalSlotCpus-Cpus)/TotalSlotCpus
       memory_ratio: Real(TotalSlotMemory-Memory)/TotalSlotMemory
     options:
-      pool: f03-001-155-e.gridka.de          # overlay collector hostname
+      pool: c03-001-151.gridka.de          # overlay collector hostname
 
   Sites:
     - name: TritonGPU
@@ -60,11 +61,11 @@ tardis:
         jdl: pilot.jdl                         # ← template JDL, see below
     SubmitOptions:
       spool: null
-      pool: f03-001-155-e.gridka.de         # ← CHANGE: resource pool you submit pilots to
+      pool: c03-001-151.gridka.de         # ← CHANGE: resource pool you submit pilots to
                                                     #   (same host as above if it's one pool)
     MachineMetaData:
       gpu_pilot:
-        Cores: 4
+        Cores: 3
         Memory: 16
         Disk: 40
         # GPUs: 1                                    # custom key, referenced as ${GPUs} in the JDL
