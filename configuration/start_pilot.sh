@@ -3,6 +3,7 @@ set -e
 
 CORES=${TardisDroneCores:-1}
 MEMORY=${TardisDroneMemory:-2048}
+GPUS=${TardisDroneGpus:-1} 
 UUID=${TardisDroneUuid:-unknown}
 
 exec apptainer exec --nv \

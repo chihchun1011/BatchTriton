@@ -2,7 +2,7 @@ pipeline:
   - __type__: cobald.controller.linear.LinearController
     low_utilisation: 0.90
     high_allocation: 0.90
-    rate: 5
+    rate: 1
   - __type__: cobald.decorator.limiter.Limiter
     minimum: 1
   - __type__: cobald.decorator.logger.Logger
@@ -38,34 +38,36 @@ tardis:
   # The OVERLAY pool your Triton job will actually be submitted to
   # check via condor_status
   BatchSystem:
-    adapter: HTCondor
+    adapter: Triton
     max_age: 1                                   # re-query condor_status every 1 min
-    allocation: 1.0
-    ratios:
-      cpu_ratio: Real(TotalSlotCpus-Cpus)/TotalSlotCpus
-      memory_ratio: Real(TotalSlotMemory-Memory)/TotalSlotMemory
+    # allocation: 1.0
+    # ratios:
+    #   cpu_ratio: Real(TotalSlotCpus-Cpus)/TotalSlotCpus
+    #   memory_ratio: Real(TotalSlotMemory-Memory)/TotalSlotMemory
+    triton_http_port: 8000       # Triton HTTP port (health check)
+    triton_metrics_port: 8002    # Triton Prometheus metrics port
     options:
       pool: c03-001-151.gridka.de          # overlay collector hostname
 
   Sites:
     - name: TritonGPU
-      adapter: HTCondor                           # resource-provider pool that pilots go into
-      quota: 8                                    # ← CHANGE: e.g. max total GPUs you're allowed
-
+      adapter: HTCondor                           # resource-provider pool 
+      quota: 6                                    # ← CHANGE: max total CPUs(GPUs) for on pilot
+    
   TritonGPU:
     max_age: 1
     MachineTypes:
       - gpu_pilot
     MachineTypeConfiguration:
       gpu_pilot:
-        jdl: pilot.jdl                         # ← template JDL, see below
+        jdl: pilot.jdl                        
     SubmitOptions:
       spool: null
-      pool: c03-001-151.gridka.de         # ← CHANGE: resource pool you submit pilots to
-                                                    #   (same host as above if it's one pool)
+      pool: c03-001-151.gridka.de         # ← CHANGE: resource pool 
+                                                    
     MachineMetaData:
       gpu_pilot:
-        Cores: 3
+        Cores: 6
         Memory: 16
         Disk: 40
         # GPUs: 1                                    # custom key, referenced as ${GPUs} in the JDL

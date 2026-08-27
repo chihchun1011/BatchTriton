@@ -13,5 +13,7 @@ request_disk            = ${Disk}
 request_gpus            = 1
 +IsTardisPilot          = true
 accounting_group        = tardis
+stream_output = True
+stream_error  = True
 x509userproxy = /home/tardis/tmp/x509up_u9999
 queue
