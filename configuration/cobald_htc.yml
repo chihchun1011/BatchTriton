@@ -39,21 +39,27 @@ tardis:
   # check via condor_status
   BatchSystem:
     adapter: Triton
-    max_age: 1                                   # re-query condor_status every 1 min
+    max_age: 0.1                                 # re-query condor_q every 6s (was 1min)
     # allocation: 1.0
     # ratios:
     #   cpu_ratio: Real(TotalSlotCpus-Cpus)/TotalSlotCpus
     #   memory_ratio: Real(TotalSlotMemory-Memory)/TotalSlotMemory
     triton_http_port: 8000       # Triton HTTP port (health check)
     triton_metrics_port: 8002    # Triton Prometheus metrics port
+    # TESTING ONLY: drive scale-up/scale-down by hand instead of real GPU
+    # load - `echo 0.95 > simulated_utilisation.txt` to simulate busy,
+    # `echo 0.0 > simulated_utilisation.txt` to simulate idle. Remove this
+    # key for production (real /metrics utilisation is used instead).
+    simulated_utilisation_file: simulated_utilisation.txt
     options:
       pool: c03-001-151.gridka.de          # overlay collector hostname
 
   Sites:
     - name: TritonGPU
-      adapter: HTCondor                           # resource-provider pool 
-      quota: 6                                    # ← CHANGE: max total CPUs(GPUs) for on pilot
-    
+      adapter: HTCondor                           # resource-provider pool
+      quota: 40                                    # ← CHANGE: max total CPUs(GPUs) for on pilot
+      drone_heartbeat_interval: 5                  # was default 60s - polls state every 5s instead
+
   TritonGPU:
     max_age: 1
     MachineTypes:
@@ -67,7 +73,7 @@ tardis:
                                                     
     MachineMetaData:
       gpu_pilot:
-        Cores: 6
+        Cores: 10
         Memory: 16
         Disk: 40
         # GPUs: 1                                    # custom key, referenced as ${GPUs} in the JDL
