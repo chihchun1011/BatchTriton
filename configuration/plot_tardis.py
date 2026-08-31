@@ -87,7 +87,7 @@ def plot(data):
     ax1.fill_between(t, data["demand"], data["supply"],
                      where=[d <= s for d, s in zip(data["demand"], data["supply"])],
                      color="#4a9eff", alpha=0.10, label="Supply ≥ Demand")
-    ax1.set_ylabel("Drones", color="#aaaaaa", fontsize=11)
+    ax1.set_ylabel("cpu core", color="#aaaaaa", fontsize=11)
     ax1.legend(facecolor="#1a1a2e", edgecolor="#333333", labelcolor="white", fontsize=9)
     ax1.set_title("COBalD/TARDIS Control Loop", color="white", fontsize=13, pad=12)
     ax1.grid(axis="y", color="#222222", linewidth=0.5)
