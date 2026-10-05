@@ -8,12 +8,19 @@ Usage:
     python3 plot_tardis.py tardis.log
 """
 
+import os
 import re
 import sys
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime
 from collections import defaultdict
+
+# Written next to this script's location rather than the current working
+# directory, so the plot always lands in output/plots/ regardless of where
+# this is run from (repo root, scripts/plotting/, piped from a log viewer, etc).
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "..", "output", "plots")
 
 LOW_UTIL   = 0.70   # low_utilisation in cobald.yml
 HIGH_ALLOC = 0.90   # high_allocation in cobald.yml
@@ -108,7 +115,8 @@ def plot(data):
     fig.autofmt_xdate(rotation=30, ha="right")
 
     plt.tight_layout()
-    out = "tardis_plot.png"
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    out = os.path.join(OUTPUT_DIR, "tardis_plot.png")
     plt.savefig(out, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     print(f"Saved → {out}")
     plt.show()

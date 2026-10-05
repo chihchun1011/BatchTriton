@@ -8,8 +8,7 @@ UUID=${TardisDroneUuid:-unknown}
 
 # Multiple pilots can land on the same GPU node, so each Triton instance
 # needs its own ports instead of tritonserver's fixed defaults
-# (8000/8001/8002), which would collide. Derive a stable per-drone offset
-# from TardisDroneUuid so no coordination with other pilots is needed.
+# (8000/8001/8002), which would collide. 
 # TritonAdapter._port_offset() in triton.py computes the same offset from
 # the same UUID to know which port to query - keep the two in sync.
 OFFSET=$(( 0x$(printf '%s' "$UUID" | md5sum | cut -c1-8) % 10000 ))

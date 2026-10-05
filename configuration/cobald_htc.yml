@@ -26,26 +26,27 @@ logging:
     file:
       class: logging.handlers.RotatingFileHandler
       formatter: precise
-      filename: tardis.log
+      filename: ../output/tardis.log
       maxBytes: 10485760
       backupCount: 3
 
 tardis:
   Plugins:
     SqliteRegistry:
-      db_file: drone_registry.db
+      db_file: ../output/drone_registry.db
 
-  # The OVERLAY pool your Triton job will actually be submitted to
+  # The OVERLAY pool Triton job will actually be submitted to
   # check via condor_status
   BatchSystem:
     adapter: Triton
-    max_age: 0.1                                 # re-query condor_q every 6s (was 1min)
+    max_age: 0.1                                 # re-query condor_q every 6s (unit: min)
     # allocation: 1.0
     # ratios:
     #   cpu_ratio: Real(TotalSlotCpus-Cpus)/TotalSlotCpus
     #   memory_ratio: Real(TotalSlotMemory-Memory)/TotalSlotMemory
-    triton_http_port: 8000       # Triton HTTP port (health check)
-    triton_metrics_port: 8002    # Triton Prometheus metrics port
+    triton_http_port: 8000       # Base Triton HTTP port (health check) 
+    triton_metrics_port: 8002    # Base Triton Prometheus metrics port
+    discovery_file: ../output/endpoints.json
     # TESTING ONLY: drive scale-up/scale-down by hand instead of real GPU
     # load - `echo 0.95 > simulated_utilisation.txt` to simulate busy,
     # `echo 0.0 > simulated_utilisation.txt` to simulate idle. Remove this
