@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.55.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: triton-discovery
+              mountPath: /etc/triton-discovery
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        # Single-node dev cluster: TARDIS writes discovery files straight to
+        # this host path (configuration/cobald_htc.yml's discovery_file,
+        # resolved to BatchTriton/output/). Once Triton/TARDIS run on a
+        # separate machine from k8s, this needs to become a shared network
+        # mount instead - see the discovery-file design discussion.
+        - name: triton-discovery
+          hostPath:
+            path: /home/tardis/IaaS/BatchTriton/output
+            type: Directory
+        - name: data
+          emptyDir: {}
