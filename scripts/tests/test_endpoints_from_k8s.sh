@@ -11,12 +11,20 @@
 #
 # Env vars:
 #   KUBE_NAMESPACE  - namespace to run the pod in (default: current context's)
-#   POD_NAME        - name for the ephemeral pod (default: triton-endpoint-test)
+#   POD_NAME        - name for the ephemeral pod (default: triton-endpoint-test-<pid>)
+#
+# Note: `kubectl run --rm` only deletes the pod if the client stays attached
+# until it finishes - when run non-interactively that can silently fail to
+# happen, leaving the pod behind. A fixed pod name would then collide with
+# the leftover on every later run ("AlreadyExists") before ever testing
+# anything, so the default name includes $$ for uniqueness, and any pod
+# with the chosen name is cleaned up defensively before each run anyway
+# (covers the case POD_NAME is pinned to a fixed value via the env var).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENDPOINTS_FILE="${1:-$SCRIPT_DIR/../../output/endpoints.json}"
-POD_NAME="${POD_NAME:-triton-endpoint-test}"
+POD_NAME="${POD_NAME:-triton-endpoint-test-$$}"
 
 for bin in jq kubectl; do
   if ! command -v "$bin" >/dev/null 2>&1; then
@@ -53,6 +61,8 @@ done < <(jq -c '.[]' "$ENDPOINTS_FILE")
 
 echo "Testing Triton endpoints from inside the cluster (pod: $POD_NAME)"
 echo
+
+kubectl delete pod "$POD_NAME" "${namespace_args[@]}" --ignore-not-found --wait=true >/dev/null
 
 kubectl run "$POD_NAME" "${namespace_args[@]}" --rm -i --tty=false --restart=Never \
   --image=curlimages/curl --command -- sh -c "$inner_script"
