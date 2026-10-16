@@ -1,0 +1,10 @@
+# Tooling check: 1 req/s for 60 s. Compare the number of ok rows in
+# requests.csv with the increase of nv_inference_request_success in Prometheus.
+# ONNX models fail on the V100 nodes (cudaErrorNoKernelImageForDevice with the
+# tritonserver:24.11 onnxruntime), so use the PyTorch build of ParticleNet AK4.
+model: particlenet_AK4_PT
+scale: 1.0
+batch: {min: 1, max: 40}
+shapes: {pf: [20, 50], sv: [1, 5]}
+phases:
+  - {duration: 60, rate: 1}

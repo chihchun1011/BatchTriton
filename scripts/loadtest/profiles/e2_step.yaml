@@ -1,0 +1,14 @@
+# E2 step: main validation run.
+# Rates are in units of one drone's capacity C; set `scale` to C (req/s)
+# measured in E1 calibration (calibrate.sh), or pass --scale.
+# Expected drones in the high phase: ceil(2.5 / 0.9) = 3.
+# ONNX models fail on the V100 nodes (cudaErrorNoKernelImageForDevice with the
+# tritonserver:24.11 onnxruntime), so use the PyTorch build of ParticleNet AK4.
+model: particlenet_AK4_PT
+scale: 20.0          # placeholder - replace with C from calibration
+batch: {min: 1, max: 40}
+shapes: {pf: [20, 50], sv: [1, 5]}
+phases:
+  - {duration: 300, rate: 0.3}
+  - {duration: 900, rate: 2.5}
+  - {duration: 900, rate: 0.3}

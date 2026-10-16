@@ -11,6 +11,7 @@ Usage:
 import os
 import re
 import sys
+import yaml
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime
@@ -22,8 +23,20 @@ from collections import defaultdict
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "..", "output", "plots")
 
-LOW_UTIL   = 0.70   # low_utilisation in cobald.yml
-HIGH_ALLOC = 0.90   # high_allocation in cobald.yml
+COBALD_CONFIG = os.path.join(SCRIPT_DIR, "..", "..", "configuration", "cobald_htc.yml")
+
+
+def load_thresholds(path=COBALD_CONFIG):
+    """low_utilisation / high_allocation of the LinearController in the cobald config."""
+    with open(path) as f:
+        cfg = yaml.safe_load(f)
+    controller = next(e for e in cfg["pipeline"]
+                      if e.get("__type__", "").endswith("LinearController"))
+    return controller["low_utilisation"], controller["high_allocation"]
+
+
+# Read rather than hard-coded, so the plotted lines can't drift from the config.
+LOW_UTIL, HIGH_ALLOC = load_thresholds()
 
 # ── Regex ──────────────────────────────────────────────────────────────────────
 # Matches lines like:
