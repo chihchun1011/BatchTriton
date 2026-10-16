@@ -11,6 +11,10 @@ request_cpus            = ${Cores}
 request_memory          = ${Memory}
 request_disk            = ${Disk}
 request_gpus            = 1
+# Site Puppet config (076-multijob_gpus_cpu.config) advertises each V100 8x
+# (GPU_DISCOVERY_EXTRA = -repeat 8) and START only accepts request_gpus == 1.
+# Requesting the slot's full GPUMemoryMB keeps it to one pilot per physical GPU.
+request_GPUMemoryMB     = 32000
 +IsTardisPilot          = true
 accounting_group        = tardis
 stream_output = True
