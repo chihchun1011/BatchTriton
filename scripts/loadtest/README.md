@@ -11,18 +11,65 @@ onnxruntime). Only the `pytorch_libtorch` models (`*_PT`) work there.
 
 ## Run order
 
-All commands are run from `scripts/loadtest/` with the `tardis-venv` python.
+Run every command from `scripts/loadtest/` with the `tardis-venv` python.
+Terms used below:
+
+- **jet**: one input row of the model.
+- **request**: one gRPC call, carrying a batch of jets (one event).
+- **C**: the request rate one drone sustains. E1 measures it.
+
+### E0: sanity check
+
+Sends one request to every drone in `output/endpoints.json` and prints which GPU
+each drone reports. Use it to confirm that every drone answers, before you
+put load on them.
 
 ```bash
-# E0: one request per drone, plus which GPU each drone reports
 python loadgen.py --sanity
+```
 
-# E1: capacity of one drone (stop TARDIS once the drone is up)
-./calibrate.sh [drone_uuid]
+### E1: calibration (capacity of one drone)
+
+`calibrate.sh` runs `perf_analyzer` against one drone in a closed loop: N
+clients each keep one request in flight, for N = 1, 2, 4 … 64, 10 s per step.
+Every request carries 20 jets (50 PF candidates, 5 SVs). The sweep records
+throughput, latency (queue vs compute) and GPU utilisation.
+
+**C** is the throughput at the knee: the lowest N that reaches 95 % of peak
+throughput. Below the knee the GPU has idle time. Above it, extra requests
+only wait in the queue. `C [req/s] = Inferences/s ÷ batch`.
+
+Stop TARDIS once the drone is up, so that nothing scales during the sweep.
+
+```bash
+./calibrate.sh [drone_uuid]        # default: first drone in endpoints.json
 python ../plotting/plot_calibration.py ../../output/loadtest/calibration-<ts>
-# Then set `scale:` in profiles/e*.yaml to C (req/s).
+```
 
-# E2-E4: scaling runs, with TARDIS running
+Then set `scale:` in `profiles/e*.yaml` to C, or pass `--scale <C>`. The run
+on 2026-10-21 (one V100) gave C ≈ 1,282 req/s at N = 16, with GPU utilisation 0.82.
+
+![E1 calibration at N = 16: requests travel from the clients through the server queue to the GPU](img/e1_calibration.gif)
+
+*At N = 16, slowed down 100×. Grey requests are travelling, orange ones wait
+in the queue, and blue ones are computed on the GPU.*
+
+### E2–E4: scaling runs
+
+`loadgen.py` sends open-loop Poisson traffic. Its rate follows the profile, in
+units of C. TARDIS must be running. Each run checks that the number of drones
+follows the load.
+
+| Run | Profile | Load (× C) | Checks |
+|---|---|---|---|
+| E2 step | `e2_step.yaml` | 0.3 for 5 min → 2.5 for 15 min → 0.3 for 15 min | scale-up to 3 drones, then scale-down |
+| E3 ramp | `e3_ramp.yaml` | 0 → 3 over 20 min, then 3 → 0 over 20 min | the drone count tracks a slow change |
+| E4 random | `e4_random.yaml` | random walk in 0.1–3 for 40 min, plus a 2× burst of 20 s every 5 min | stability under noisy load and short bursts |
+
+`profiles/dryrun.yaml` (1 req/s for 60 s) checks only the tooling: compare the
+`ok` rows in `requests.csv` with the Prometheus counter.
+
+```bash
 python loadgen.py profiles/e2_step.yaml          # or --scale <C>
 python fetch_prometheus.py ../../output/loadtest/e2_step-<ts>
 python ../plotting/plot_loadtest.py ../../output/loadtest/e2_step-<ts>

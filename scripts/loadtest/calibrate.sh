@@ -10,8 +10,6 @@
 #   ./calibrate.sh tritongpu-xxxx    # a specific drone
 #
 # Stop TARDIS after the drone is up so nothing scales during the sweep.
-# The first run pulls the tritonserver SDK image (several GB) into the
-# apptainer cache.
 #
 # perf_analyzer reports Inferences/Second = requests/s × BATCH, so
 #   C [req/s] = Inferences/Second / BATCH
@@ -24,10 +22,10 @@ OUT_DIR="$(realpath -m "$SCRIPT_DIR/../../output/loadtest/calibration-$(date +%Y
 SDK_IMAGE="docker://nvcr.io/nvidia/tritonserver:24.11-py3-sdk"   # same release as the server
 
 MODEL="particlenet_AK4_PT"
-# Mean of the loadgen profiles: batch 1-40 jets, pf 20-50, sv 1-5.
+# Max of the loadgen profiles: batch 1-40 jets, pf 20-50, sv 1-5.
 BATCH=20
-PF=35
-SV=3
+PF=50
+SV=5
 CONCURRENCIES=(1 2 4 8 16 32 64)
 MEASUREMENT_MS=10000
 
@@ -43,7 +41,7 @@ if [[ -z "$entry" || "$entry" == "null" ]]; then
 fi
 DRONE=$(jq -r '.drone_uuid' <<<"$entry")
 HOST=$(jq -r '.host' <<<"$entry")
-# Ports come from the discovery file only - never derived here.
+# Ports come from the discovery file only.
 GRPC_PORT=$(jq -r '.grpc_port' <<<"$entry")
 METRICS_PORT=$(jq -r '.metrics_port' <<<"$entry")
 
