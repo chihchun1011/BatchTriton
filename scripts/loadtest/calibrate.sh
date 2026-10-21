@@ -43,7 +43,8 @@ if [[ -z "$entry" || "$entry" == "null" ]]; then
 fi
 DRONE=$(jq -r '.drone_uuid' <<<"$entry")
 HOST=$(jq -r '.host' <<<"$entry")
-GRPC_PORT=$(( $(jq -r '.http_port' <<<"$entry") + 1 ))   # see start_pilot.sh
+# Ports come from the discovery file only - never derived here.
+GRPC_PORT=$(jq -r '.grpc_port' <<<"$entry")
 METRICS_PORT=$(jq -r '.metrics_port' <<<"$entry")
 
 mkdir -p "$OUT_DIR"

@@ -9,8 +9,8 @@ UUID=${TardisDroneUuid:-unknown}
 # Multiple pilots can land on the same GPU node, so each Triton instance
 # needs its own ports instead of tritonserver's fixed defaults
 # (8000/8001/8002), which would collide. 
-# TritonAdapter._port_offset() in triton.py computes the same offset from
-# the same UUID to know which port to query - keep the two in sync.
+# TritonAdapter._ports() in triton.py computes the same ports from the same
+# UUID (base ports from cobald_htc.yml)- keep the two in sync. 
 OFFSET=$(( 0x$(printf '%s' "$UUID" | md5sum | cut -c1-8) % 10000 ))
 HTTP_PORT=$((8000 + OFFSET))
 GRPC_PORT=$((8001 + OFFSET))

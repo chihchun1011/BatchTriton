@@ -44,8 +44,11 @@ tardis:
     # ratios:
     #   cpu_ratio: Real(TotalSlotCpus-Cpus)/TotalSlotCpus
     #   memory_ratio: Real(TotalSlotMemory-Memory)/TotalSlotMemory
-    triton_http_port: 8000       # Base Triton HTTP port (health check) 
+    triton_http_port: 8000       # Base Triton HTTP port (health check)
+    triton_grpc_port: 8001       # Base Triton gRPC port (inference)
     triton_metrics_port: 8002    # Base Triton Prometheus metrics port
+    # Base ports must match start_pilot.sh. Consumers (load tests, Prometheus,
+    # proxy) read the actual per-drone ports from discovery_file only.
     discovery_file: ../output/endpoints.json
     # TESTING ONLY: drive scale-up/scale-down by hand instead of real GPU
     # load - `echo 0.95 > simulated_utilisation.txt` to simulate busy,

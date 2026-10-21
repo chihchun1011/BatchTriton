@@ -112,13 +112,7 @@ class Profile:
 
 class PayloadFactory:
     """
-    Random input tensors with the shapes the model expects. Inference cost
-    depends on shapes and batch size, not on the values, so random data is
-    enough to load the GPU realistically.
-
-    Variable dims (-1) are filled per request from `shapes`, keyed by the
-    input-name prefix (e.g. "pf" for pf_points/pf_features/pf_mask), so all
-    inputs of one particle collection share the same length.
+    Random input tensors with the shapes the model expects. 
     """
 
     def __init__(self, model_config, cfg: dict, rng: np.random.Generator):
@@ -137,6 +131,7 @@ class PayloadFactory:
         inputs = []
         for name, dims in self.inputs:
             prefix = name.split("_")[0]
+            # example "pf_points": dims=[-1, 2]->[batch, shape, 2], "pf_features", dims=[-1, 16]->[batch, shape, 16]
             shape = [batch] + [lengths.get(prefix, 1) if d == -1 else d for d in dims]
             if "_mask" in name:
                 data = np.ones(shape, dtype=np.float32)
@@ -155,7 +150,7 @@ class EndpointPool:
     """
     Tracks the ready Triton endpoints listed in the discovery file.
 
-    gRPC port = http_port + 1, matching start_pilot.sh (8000/8001/8002 + offset).
+    Host and ports come only from the discovery file, never derived here.
     An endpoint is only used once /v2/health/ready answers 200: drones appear
     in endpoints.json as soon as their condor job runs, which can be well
     before Triton has finished loading models.
@@ -172,7 +167,7 @@ class EndpointPool:
         uuid = ep["drone_uuid"]
         if uuid not in self._clients:
             self._clients[uuid] = grpcclient.InferenceServerClient(
-                url=f"{ep['host']}:{ep['http_port'] + 1}"
+                url=f"{ep['host']}:{ep['grpc_port']}"
             )
         return self._clients[uuid]
 
@@ -181,13 +176,20 @@ class EndpointPool:
             return None
         return self.ready[next(self._rr) % len(self.ready)]
 
-    async def refresh(self, session: aiohttp.ClientSession) -> None:
+    def read_listed(self) -> list[dict]:
+        """
+        All entries of the discovery file. An unreadable file counts as no
+        drones (e.g. before TARDIS's first condor_q refresh has written it).
+        """
         try:
             with open(self.path) as f:
-                listed = json.load(f)
+                return json.load(f)
         except (OSError, json.JSONDecodeError) as e:
             print(f"warning: could not read {self.path}: {e}", file=sys.stderr)
-            return
+            return []
+
+    async def refresh(self, session: aiohttp.ClientSession) -> None:
+        listed = self.read_listed()
 
         async def is_ready(ep):
             url = f"http://{ep['host']}:{ep['http_port']}/v2/health/ready"
@@ -356,8 +358,6 @@ def gpu_uuids(metrics_text: str) -> list[str]:
     GPU UUIDs a Triton instance reports, taken from the labels of its
     nv_gpu_utilization lines, e.g.
         nv_gpu_utilization{gpu_uuid="GPU-ab949071-e0aa-..."} 0
-    Only the label is used, not the value: it tells which physical GPU the
-    drone runs on, which the health check can't.
     """
     uuids = set()
     for line in metrics_text.splitlines():
@@ -368,15 +368,12 @@ def gpu_uuids(metrics_text: str) -> list[str]:
 
 async def sanity(args, model):
     """
-    E0: for every drone in the discovery file, report which GPU it uses and
-    send one real inference request. All three checks are needed: a drone can
-    be READY (health check passes) and still fail every inference, as the
-    ONNX models do on the V100 nodes.
+    E0: for every drone, report which GPU it uses and send one real inference request. 
+    A drone can be READY (health check passes) and still fail every inference.
     """
     pool = EndpointPool(args.endpoints)
     async with aiohttp.ClientSession() as session:
-        with open(args.endpoints) as f:
-            listed = json.load(f)
+        listed = pool.read_listed()
         await pool.refresh(session)  # health check → pool.ready
         ready = {ep["drone_uuid"] for ep in pool.ready}
         rng = np.random.default_rng(args.seed)
@@ -410,9 +407,6 @@ async def sanity(args, model):
             print(row.format(ep["drone_uuid"], ep["host"], "yes" if is_ready else "no",
                              latency, gpu, result))
 
-        print("\nREADY = /v2/health/ready returned 200.  LATENCY = one inference "
-              f"({model}, batch 8), first call includes model warm-up.\n"
-              "GPU = gpu_uuid label from /metrics; drones sharing a GPU show the same value.")
         await pool.close()
 
 
