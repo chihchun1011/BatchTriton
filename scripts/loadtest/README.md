@@ -1,8 +1,6 @@
 # Load tests
 
-Drive the TARDIS-managed Tritons with real inference requests and check that
-COBalD/TARDIS scales on real `nv_gpu_utilization`. Before you run anything, remove
-`simulated_utilisation_file` from `configuration/cobald_htc.yml`. Otherwise
+Drive the TARDIS-managed Tritons with real inference requests. Before you run anything, remove `simulated_utilisation_file` from `configuration/cobald_htc.yml`. Otherwise
 TARDIS ignores the real metrics.
 
 Model: `particlenet_AK4_PT`. The ONNX models in the CMSSW repository fail on the
@@ -31,9 +29,11 @@ python loadgen.py --sanity
 ### E1: calibration (capacity of one drone)
 
 `calibrate.sh` runs `perf_analyzer` against one drone in a closed loop: N
-clients each keep one request in flight, for N = 1, 2, 4 … 64, 10 s per step.
+clients each keep one request in flight, for N = 1, 2, 4 … 64. perf_analyzer
+measures each step in 30 s windows until 3 windows agree within 10 %. The
+sweep runs 5 times, and the plot shows the mean ± std between runs.
 Every request carries 20 jets (50 PF candidates, 5 SVs). The sweep records
-throughput, latency (queue vs compute) and GPU utilisation.
+throughput, latency and GPU utilisation.
 
 **C** is the throughput at the knee: the lowest N that reaches 95 % of peak
 throughput. Below the knee the GPU has idle time. Above it, extra requests
@@ -51,8 +51,6 @@ on 2026-10-21 (one V100) gave C ≈ 1,282 req/s at N = 16, with GPU utilisation 
 
 ![E1 calibration at N = 16: requests travel from the clients through the server queue to the GPU](img/e1_calibration.gif)
 
-*At N = 16, slowed down 100×. Grey requests are travelling, orange ones wait
-in the queue, and blue ones are computed on the GPU.*
 
 ### E2–E4: scaling runs
 
