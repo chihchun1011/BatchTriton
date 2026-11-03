@@ -70,8 +70,15 @@ follows the load.
 ```bash
 python loadgen.py profiles/e2_step.yaml          # or --scale <C>
 python fetch_prometheus.py ../../output/loadtest/e2_step-<ts>
+python ../plotting/plot_tardis.py                # check the drone count first
 python ../plotting/plot_loadtest.py ../../output/loadtest/e2_step-<ts>
 ```
+
+Check `plot_tardis.py` first. It plots TARDIS demand and supply from
+`output/tardis.log`, which shows whether TARDIS started the right number of
+Triton servers. The plot goes to `output/tardis_plots/`. With
+`--prometheus ../../output/loadtest/e2_step-<ts>`, it uses the real GPU
+utilisation instead of the gappy log values.
 
 `fetch_prometheus.py` finds Prometheus through the ClusterIP of
 `monitoring/prometheus`. Use `--prom` or `$PROM_URL` to override it. It also
