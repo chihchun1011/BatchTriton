@@ -1,17 +1,14 @@
 # SONIC Screwdriver
 
-COBalD/TARDIS for ML inference serving: scale NVIDIA Triton Inference
-Servers on opportunistic GPU resources up and down with the demand for
-inference.
-
-SONIC (Services for Optimized Network Inference on Coprocessors) is the CMS
-approach to run ML inference as a service: CMSSW jobs send their inputs to a remote Triton
-server instead of running the models in-process. That needs a pool of Triton
-servers whose size follows the load. SONIC Screwdriver provides it with the
-tools CMS already uses to integrate opportunistic resources:
+NVIDIA Triton Inference Servers on batch and opportunistic GPU resources,
+scaled up and down with the demand for inference by
+[COBalD/TARDIS](https://cobald-tardis.readthedocs.io/), which German HEP
+already uses to integrate such resources. Clients send their inputs to these
+servers instead of running the models in-process (inference as a service, see
+[SONIC](https://github.com/fastmachinelearning/SonicCMS)).
 
 - **TARDIS** submits *pilots* through HTCondor. Each pilot starts one Triton
-  server in Apptainer on one GPU and serves the CMSSW models from CVMFS.
+  server in Apptainer on one GPU, with the models served from CVMFS.
 - A **TritonAdapter** (in the [`tardis-src`](tardis-src) submodule, branch
   `feature/triton-support`) lets TARDIS manage those servers. It checks
   readiness on Triton's health endpoint and reads GPU utilisation from
@@ -21,11 +18,82 @@ tools CMS already uses to integrate opportunistic resources:
   when they idle.
 
 ```
-CMSSW / clients ──gRPC──▶ Triton pilots (HTCondor + Apptainer, 1 GPU each)
+Clients ─────────gRPC──▶ Triton pilots (HTCondor + Apptainer, 1 GPU each)
        ▲                        │ health, GPU utilisation
        │ endpoints.json         ▼
        └────────────── TARDIS (TritonAdapter) ◀── COBalD controller
 ```
+
+## Usage
+
+### Requirements
+
+- An HTCondor pool with GPU worker nodes that you can submit to.
+- Apptainer with GPU support (`--nv`) and CVMFS on the worker nodes. The
+  default pilot takes the Triton image from `unpacked.cern.ch` and the
+  models from `cms.cern.ch`.
+- Python 3.10 on the submit node.
+- Optional: a Kubernetes cluster for the Prometheus monitoring in `k8s/`.
+
+### 1. Install
+
+```bash
+git clone --recurse-submodules https://github.com/chihchun1011/sonic-screwdriver.git
+cd sonic-screwdriver
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+mkdir -p output
+```
+
+`requirements.txt` installs the TARDIS fork from `tardis-src/` in editable
+mode, so changes to the TritonAdapter take effect without reinstalling.
+
+### 2. Configure for your site
+
+| File | What to adapt |
+|---|---|
+| `configuration/cobald_htc.yml` | `pool` (your collector), site `quota`, `MachineMetaData` (cores, memory, disk per pilot), controller thresholds |
+| `configuration/pilot.jdl` | GPU request options your site needs; `x509userproxy` if your pool requires a proxy |
+| `configuration/start_pilot.sh` | Triton image and model repository |
+
+If your pool needs an X.509 proxy, create one and point `x509userproxy` in
+`pilot.jdl` at it:
+
+```bash
+voms-proxy-init --rfc --voms <your-vo> -valid 192:00
+```
+
+### 3. Run
+
+```bash
+cd configuration
+python -m cobald.daemon cobald_htc.yml
+```
+
+TARDIS logs to `output/tardis.log` and writes the live Triton endpoints to
+`output/endpoints.json`. Check that the servers answer with
+`scripts/tests/test_endpoints.sh`.
+
+### 4. Monitoring (optional)
+
+```bash
+kubectl apply -f k8s/namespace-monitoring.yaml
+kubectl apply -f k8s/prometheus/
+kubectl -n monitoring port-forward svc/prometheus 9090:9090
+```
+
+Set the `hostPath` in `k8s/prometheus/deployment.yaml` to your `output/`
+directory first, since Prometheus finds the drones through `endpoints.json`.
+To reach the UI from your laptop, forward the port over SSH:
+`ssh -L 9090:localhost:9090 <node>`.
+
+### Troubleshooting
+
+- **Apptainer fails to create a writable layer with `--nv`:** set
+  `use nvidia-container-cli = no` in `/etc/apptainer/apptainer.conf`.
+
+To test scaling with real load, see [scripts/loadtest](scripts/loadtest/README.md).
 
 ## Layout
 

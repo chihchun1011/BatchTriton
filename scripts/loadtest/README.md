@@ -7,7 +7,7 @@ Default Model: `particlenet_AK4_PT`.
 
 ## Run order
 
-Run every command from `scripts/loadtest/` with the `tardis-venv` python.
+Run every command from `scripts/loadtest/` with the project venv active (see the [top-level README](../../README.md#1-install)).
 Terms used below:
 
 - **jet**: one input row of the model.

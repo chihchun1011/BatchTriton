@@ -1,0 +1,14 @@
+# Python dependencies for SONIC Screwdriver (tested with Python 3.10).
+# Install from the repository root: pip install -r requirements.txt
+
+# TARDIS fork with the TritonAdapter (git submodule). The cobald-tardis
+# release on PyPI does not include it. Pulls in cobald as a dependency.
+-e ./tardis-src
+
+# scripts/loadtest and scripts/plotting
+tritonclient[grpc]
+aiohttp
+numpy
+matplotlib
+PyYAML
+requests
