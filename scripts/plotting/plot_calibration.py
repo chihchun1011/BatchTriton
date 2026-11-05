@@ -5,9 +5,8 @@ Usage:
     python plot_calibration.py ../../output/loadtest/calibration-20261016-120803
 
 Writes <run_dir>/calibration.png with three panels against concurrency:
-throughput (req/s), latency split into queue vs compute plus the client p99,
-and GPU utilisation against the cobald low_utilisation threshold. Also prints
-the table and the suggested C (throughput at the knee).
+throughput (req/s), latency, and GPU utilisation against the cobald low_utilisation threshold. 
+Also prints the table and the suggested C (throughput at the knee).
 
 calibrate.sh repeats the sweep (a Run column in calibration.csv). Every point
 is the mean over runs, with error bars of ± one standard deviation between
@@ -26,7 +25,7 @@ from matplotlib.ticker import AutoMinorLocator, LogLocator, NullFormatter
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
-from plot_tardis import LOW_UTIL  # noqa: E402
+from tardis_log import LOW_UTIL  # noqa: E402
 
 # Knee = lowest concurrency reaching this fraction of the peak throughput.
 KNEE_FRACTION = 0.95

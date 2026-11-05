@@ -1,10 +1,10 @@
 """
-Load-test plotter: lines up the load generator, Triton (via Prometheus) and
-the COBalD/TARDIS control loop on one time axis.
+Load-test run timeline: lines up the load generator, Triton (via Prometheus)
+and the COBalD/TARDIS control loop on one time axis.
 
-Usage:
-    python plot_loadtest.py ../../output/loadtest/e2_step-20261016-120000
-    python plot_loadtest.py <run_dir> --tardis-log ../../output/tardis.log
+Usage (from scripts/loadtest/):
+    python ../plotting/plot_run_timeline.py ../../output/loadtest/e2_step-<ts>
+    python ../plotting/plot_run_timeline.py <run_dir> --tardis-log ../../output/tardis.log
 
 Needs in <run_dir>: requests.csv + meta.json (loadgen.py) and prometheus.csv
 (fetch_prometheus.py). Writes into <run_dir>:
@@ -15,9 +15,7 @@ Needs in <run_dir>: requests.csv + meta.json (loadgen.py) and prometheus.csv
 
 import argparse
 import csv
-import json
 import os
-import re
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -29,29 +27,25 @@ import numpy as np
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "loadtest"))
-from plot_tardis import HIGH_ALLOC, LOW_UTIL, parse  # noqa: E402
+from tardis_log import (DRONE_CORES, HIGH_ALLOC, LOW_UTIL, TARDIS_LOG,  # noqa: E402
+                        crop, read_log, run_window)
 from loadgen import Profile  # noqa: E402
 
-DEFAULT_TARDIS_LOG = os.path.join(SCRIPT_DIR, "..", "..", "output", "tardis.log")
 BIN_S = 10
-CORES_PER_DRONE = 10   # MachineMetaData.gpu_pilot.Cores in cobald_htc.yml
+# For the "Tritons up × cores" line; assumes one machine type (gpu_pilot).
+CORES_PER_DRONE = max(DRONE_CORES.values())
 
 BG, FG, GRID = "#0f1117", "#aaaaaa", "#222222"
 DRONE_COLORS = ["#4a9eff", "#ff6b6b", "#f7c948", "#7ed4a0", "#c792ea",
                 "#ff9f43", "#5ce1e6", "#f78fb3", "#a3cb38", "#9aa5ce"]
 
-# cobald.runtime.tardis.resources.dronestates: 2026-10-05 15:11:32 Drone {... 'drone_uuid': 'tritongpu-72d089a132' ...} in RequestState
-STATE_RE = re.compile(
-    r"dronestates: (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) Drone \{.*?"
-    r"'drone_uuid': '([^']+)'.*\} in (\w+State)"
-)
 STATE_COLORS = {
-    "RequestState": "#555555", "BootingState": "#ff9f43",
-    "IntegrateState": "#f7c948", "IntegratingState": "#f7c948",
-    "AvailableState": "#7ed4a0", "DrainState": "#ff6b6b",
-    "DrainingState": "#ff6b6b", "DisintegrateState": "#c792ea",
-    "ShutDownState": "#9aa5ce", "ShuttingDownState": "#9aa5ce",
-    "CleanupState": "#444444",
+    "Request": "#555555", "Booting": "#ff9f43",
+    "Integrate": "#f7c948", "Integrating": "#f7c948",
+    "Available": "#7ed4a0", "Drain": "#ff6b6b",
+    "Draining": "#ff6b6b", "Disintegrate": "#c792ea",
+    "ShutDown": "#9aa5ce", "ShuttingDown": "#9aa5ce",
+    "Cleanup": "#444444", "Down": "#333333",
 }
 
 
@@ -107,25 +101,6 @@ def load_prometheus(path):
             t.append(float(row["t"]))
             vals.append(v)
     return series
-
-
-def load_states(path, t0, t1):
-    """{drone_uuid: [(datetime, state), ...]} - first log line per state only."""
-    states = defaultdict(list)
-    if not os.path.exists(path):
-        return states
-    with open(path, errors="ignore") as f:
-        for line in f:
-            m = STATE_RE.search(line)
-            if not m:
-                continue
-            t = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
-            if not (t0 <= t <= t1):
-                continue
-            uuid, state = m.group(2), m.group(3)
-            if not states[uuid] or states[uuid][-1][1] != state:
-                states[uuid].append((t, state))
-    return states
 
 
 def binned(times, edges, weights=None):
@@ -193,11 +168,12 @@ def plot_timeline(run_dir, meta, reqs, prom, tardis, t0, t1):
     legend(ax_rate, loc="upper left")
 
     # 2. TARDIS demand / supply (cores) + ready Tritons
+    if tardis["supply_time"]:
+        ax_sup.step(tardis["supply_time"], tardis["supply"], where="post",
+                    color="#4a9eff", linewidth=1.5, label="Supply (TARDIS)")
     if tardis["time"]:
-        ax_sup.plot(tardis["time"], tardis["supply"], color="#4a9eff", linewidth=1.5,
-                    label="Supply (TARDIS)")
-        ax_sup.plot(tardis["time"], tardis["demand"], color="#ff6b6b", linewidth=1.5,
-                    label="Demand (TARDIS)")
+        ax_sup.step(tardis["time"], tardis["demand"], where="post", color="#ff6b6b",
+                    linewidth=1.5, label="Demand (TARDIS)")
     up = prom.get("up", {})
     if up:
         tt = sorted({t for times, _ in up.values() for t in times})
@@ -299,10 +275,14 @@ def plot_drones(run_dir, states, reqs, t1):
     if not states:
         print("No drone state transitions in the run window - skipping drones.png")
         return
+    # min, not first row: requests.csv is one block per loadgen worker.
     first_ok = {}
     for r in reqs:
-        if r["status"] == "ok" and r["drone_uuid"] not in first_ok:
-            first_ok[r["drone_uuid"]] = ts(r["t_send"])
+        if r["status"] == "ok":
+            t = float(r["t_send"])
+            if r["drone_uuid"] not in first_ok or t < first_ok[r["drone_uuid"]]:
+                first_ok[r["drone_uuid"]] = t
+    first_ok = {u: ts(t) for u, t in first_ok.items()}
 
     uuids = sorted(states, key=lambda u: states[u][0][0])
     fig, ax = plt.subplots(figsize=(13, 0.5 * len(uuids) + 2))
@@ -327,7 +307,7 @@ def plot_drones(run_dir, states, reqs, t1):
     ax.xaxis_date()
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
     ax.set_title("Drone lifecycle (TARDIS states)", color="white", fontsize=13, pad=12)
-    legend(ax, loc="upper right", ncol=3)
+    legend(ax, loc="upper left", bbox_to_anchor=(1.01, 1))
     fig.autofmt_xdate(rotation=30, ha="right")
     save(fig, run_dir, "drones.png")
 
@@ -336,31 +316,30 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("run_dir")
-    p.add_argument("--tardis-log", default=DEFAULT_TARDIS_LOG)
+    p.add_argument("--tardis-log", default=TARDIS_LOG)
     p.add_argument("--pad", type=float, default=60.0,
                    help="seconds before/after the run to show")
     p.add_argument("--show", action="store_true")
     args = p.parse_args()
 
-    with open(os.path.join(args.run_dir, "meta.json")) as f:
-        meta = json.load(f)
+    meta, lo, hi = run_window(args.run_dir, args.pad)
     t0, t1 = meta["start"] - args.pad, meta["end"] + args.pad
     reqs = load_requests(os.path.join(args.run_dir, "requests.csv"))
     prom = load_prometheus(os.path.join(args.run_dir, "prometheus.csv"))
 
-    tardis = {"time": [], "demand": [], "supply": [], "utilisation": [], "allocation": []}
+    tardis = {"time": [], "demand": [], "utilisation": [], "allocation": [],
+              "supply_time": [], "supply": [], "states": {}}
     if os.path.exists(args.tardis_log):
-        with open(args.tardis_log) as f:
-            full = parse(f)
-        keep = [i for i, t in enumerate(full["time"]) if ts(t0) <= t <= ts(t1)]
-        tardis = {k: [v[i] for i in keep] for k, v in full.items()}
+        tardis = crop(read_log(args.tardis_log), lo, hi)
+    else:
+        print(f"warning: {args.tardis_log} missing", file=sys.stderr)
     if not tardis["time"]:
         print("note: no TARDIS control-loop lines in the run window "
               "(was TARDIS running?)", file=sys.stderr)
 
     plot_timeline(args.run_dir, meta, reqs, prom, tardis, t0, t1)
     plot_distribution(args.run_dir, reqs, t0, t1)
-    plot_drones(args.run_dir, load_states(args.tardis_log, ts(t0), ts(t1)), reqs, t1)
+    plot_drones(args.run_dir, tardis["states"], reqs, t1)
     if args.show:
         plt.show()
 

@@ -70,20 +70,26 @@ follows the load.
 ```bash
 python loadgen.py profiles/e2_step.yaml          # or --scale <C>
 python fetch_prometheus.py ../../output/loadtest/e2_step-<ts>
-python ../plotting/plot_tardis.py                # check the drone count first
-python ../plotting/plot_loadtest.py ../../output/loadtest/e2_step-<ts>
+python ../plotting/plot_control_loop.py ../../output/loadtest/e2_step-<ts>
+python ../plotting/plot_run_timeline.py ../../output/loadtest/e2_step-<ts>   # optional, for debugging
 ```
-
-Check `plot_tardis.py` first. It plots TARDIS demand and supply from
-`output/tardis.log`, which shows whether TARDIS started the right number of
-Triton servers. The plot goes to `output/tardis_plots/`. With
-`--prometheus ../../output/loadtest/e2_step-<ts>`, it uses the real GPU
-utilisation instead of the gappy log values.
 
 `fetch_prometheus.py` finds Prometheus through the ClusterIP of
 `monitoring/prometheus`. Use `--prom` or `$PROM_URL` to override it. It also
 checks that the number of successful requests per drone matches between
 `requests.csv` and Prometheus.
+
+Check `plot_control_loop.py` first. It plots TARDIS demand and supply from
+`output/tardis.log`, cropped to the run, which shows whether TARDIS started
+the right number of Triton servers. If the run has a `prometheus.csv`, it uses
+the real GPU utilisation instead of the gappy log values. Without a run dir it
+plots the whole log to `output/tardis_plots/control_loop.png`, which needs no
+load test.
+
+`plot_run_timeline.py` puts the client view (offered vs achieved rate,
+latency, drops), Prometheus and TARDIS on one time axis, for debugging a run.
+All plotting scripts share the log and config parsing in
+`scripts/plotting/tardis_log.py`.
 
 ## Outputs (`output/loadtest/<run>/`)
 
@@ -92,6 +98,7 @@ checks that the number of successful requests per drone matches between
 | `requests.csv` | One row per request: `ok`, `error`, `dropped` (client in-flight cap), or `no_endpoint` |
 | `meta.json` | Profile, scale, seed, start/end time |
 | `prometheus.csv` | GPU util, success/failure rate, queue/compute time per request, batch per exec, `up` |
+| `control_loop.png` | TARDIS demand/supply with holds shaded · GPU utilisation vs controller thresholds |
 | `timeline.png` | Offered vs achieved rate · TARDIS demand/supply · utilisation and thresholds · latency/errors · queue time |
 | `distribution.png` | Successful requests per drone over time |
 | `drones.png` | TARDIS state per drone, plus the first request each drone served |
