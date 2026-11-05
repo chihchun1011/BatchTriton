@@ -1,4 +1,4 @@
-# Gitignore for BatchTriton
+# Gitignore for SONIC Screwdriver
 tardis-venv/
 .venv/
 .idea/

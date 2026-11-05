@@ -37,12 +37,12 @@ spec:
             name: prometheus-config
         # Single-node dev cluster: TARDIS writes discovery files straight to
         # this host path (configuration/cobald_htc.yml's discovery_file,
-        # resolved to BatchTriton/output/). Once Triton/TARDIS run on a
+        # resolved to sonic-screwdriver/output/). Once Triton/TARDIS run on a
         # separate machine from k8s, this needs to become a shared network
         # mount instead - see the discovery-file design discussion.
         - name: triton-discovery
           hostPath:
-            path: /home/tardis/IaaS/BatchTriton/output
+            path: /home/tardis/IaaS/sonic-screwdriver/output
             type: Directory
         - name: data
           emptyDir: {}
