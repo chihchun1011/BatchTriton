@@ -7,13 +7,17 @@ point: with a closed loop (fixed concurrency) adding servers just dilutes the
 load, so there is never unmet demand for TARDIS to scale against.
 
 Endpoints are taken from the TARDIS discovery file (output/endpoints.json,
-written by TritonAdapter._export_discovery_file) and re-read periodically, so
-drones that TARDIS starts or drains during a run are picked up / dropped.
+written by TritonAdapter._export_discovery_file) and re-read periodically.
 Requests are spread round-robin over the endpoints that report ready.
+
+One Python process tops out at ~1100 req/s (payload creation + gRPC on one
+core), so the load is split over --workers processes, each sending a Poisson stream 
+at rate/N.
 
 Usage:
     python loadgen.py profiles/e2_step.yaml
-    python loadgen.py profiles/e2_step.yaml --scale 2.0   # multiply all rates
+    python loadgen.py profiles/e2_step.yaml --scale 1300   # multiply all rates
+    python loadgen.py profiles/e2_step.yaml --workers 8   # override process count
     python loadgen.py --sanity                            # one request per endpoint (E0)
 
 Each run writes to output/loadtest/<profile>-<timestamp>/:
@@ -27,7 +31,10 @@ import csv
 import itertools
 import json
 import math
+import multiprocessing as mp
 import os
+import queue
+import shutil
 import random
 import sys
 import time
@@ -49,6 +56,10 @@ REQUEST_TIMEOUT_S = 30
 # this grace period, so requests still in flight to them finish (or fail) on
 # their own instead of being cancelled by us.
 CLIENT_CLOSE_GRACE_S = 60
+# Rate one worker process is given at most. A single process measured
+# ~1100 req/s at full load with p50 ~330 ms of client-side queueing; at
+# 650 req/s it kept up (p50 12 ms), so stay below that.
+WORKER_MAX_RATE = 600
 
 
 # ── Load profile ──────────────────────────────────────────────────────────────
@@ -84,6 +95,9 @@ class Profile:
                 return max(0.0, self._phase_rate(i, phase, t - start)) * self.scale
             start += phase["duration"]
         return 0.0
+
+    def peak(self, step: float = 0.1) -> float:
+        return max(self.rate(i * step) for i in range(int(self.duration / step) + 1))
 
     def _phase_rate(self, i: int, phase: dict, t: float) -> float:
         if "random_walk" in phase:
@@ -254,14 +268,17 @@ async def send_one(pool, ep, factory, model, writer, stats):
                      f"{latency_ms:.2f}", status, error])
 
 
-async def run(args, cfg):
+async def run_worker(args, cfg, worker, n_workers, run_dir, events, go, start_wall):
+    """
+    One sender process: the whole profile at 1/n_workers of the rate, into its
+    own requests.<worker>.csv. Progress goes to the parent through `events`.
+    """
     model = cfg["model"]
-    profile = Profile(cfg, args.scale or cfg.get("scale", 1.0), args.seed)
-    rng = np.random.default_rng(args.seed)
-
-    name = os.path.splitext(os.path.basename(args.profile))[0]
-    run_dir = os.path.join(OUTPUT_DIR, f"{name}-{datetime.now():%Y%m%d-%H%M%S}")
-    os.makedirs(run_dir, exist_ok=True)
+    # Same profile seed in every worker, so random walks have the same shape;
+    # arrivals and payloads get their own stream per worker.
+    profile = Profile(cfg, (args.scale or cfg.get("scale", 1.0)) / n_workers, args.seed)
+    rng = np.random.default_rng(args.seed + worker)
+    max_inflight = math.ceil(args.max_inflight / n_workers)
 
     pool = EndpointPool(args.endpoints)
     stats = Stats()
@@ -270,19 +287,21 @@ async def run(args, cfg):
     async with aiohttp.ClientSession() as session:
         await pool.refresh(session)
         if not pool.ready:
-            sys.exit(f"error: no ready endpoints in {args.endpoints}")
+            events.put(("error", worker, f"no ready endpoints in {args.endpoints}"))
+            return
         model_config = (await pool.client(pool.ready[0]).get_model_config(model)).config
         factory = PayloadFactory(model_config, cfg, rng)
 
-        meta = {
-            "profile": args.profile, "profile_cfg": cfg, "scale": profile.scale,
-            "model": model, "seed": args.seed, "max_inflight": args.max_inflight,
-            "start": time.time(), "duration_s": profile.duration,
-        }
-        csv_file = open(os.path.join(run_dir, "requests.csv"), "w", newline="")
+        csv_file = open(os.path.join(run_dir, f"requests.{worker}.csv"), "w", newline="")
         writer = csv.writer(csv_file)
         writer.writerow(FIELDS)
-        print(f"Writing to {run_dir} ({profile.duration} s, scale={profile.scale})")
+
+        # All workers start on the parent's signal, at the same wall-clock time.
+        events.put(("ready", worker, None))
+        await asyncio.get_running_loop().run_in_executor(None, go.wait)
+        if not start_wall.value:
+            csv_file.close()
+            return  # released without a start time: the run was aborted
 
         async def refresher():
             while True:
@@ -290,17 +309,16 @@ async def run(args, cfg):
                 await pool.refresh(session)
 
         async def reporter():
+            tick = 0
             while True:
                 await asyncio.sleep(args.report_every)
-                lat = sorted(stats.latencies)
-                p50 = lat[len(lat) // 2] if lat else float("nan")
-                p99 = lat[int(len(lat) * 0.99)] if lat else float("nan")
-                t = time.time() - meta["start"]
-                print(f"[{t:7.0f}s] target={profile.rate(t):6.1f}/s  "
-                      f"ok={stats.ok / args.report_every:6.1f}/s  err={stats.err}  "
-                      f"dropped={stats.dropped}  no_ep={stats.no_endpoint}  "
-                      f"inflight={len(tasks)}  endpoints={len(pool.ready)}  "
-                      f"p50={p50:.0f}ms p99={p99:.0f}ms", flush=True)
+                tick += 1
+                events.put(("stats", worker, {
+                    "tick": tick, "ok": stats.ok, "err": stats.err,
+                    "dropped": stats.dropped, "no_ep": stats.no_endpoint,
+                    "inflight": len(tasks), "endpoints": len(pool.ready),
+                    "latencies": stats.latencies,
+                }))
                 csv_file.flush()
                 stats.reset()
 
@@ -308,7 +326,7 @@ async def run(args, cfg):
 
         # Open-loop Poisson arrivals. next_t is an absolute schedule so that
         # time spent in the loop body doesn't make the real rate drift low.
-        start = time.monotonic()
+        start = time.monotonic() - (time.time() - start_wall.value)
         next_t = 0.0
         try:
             while next_t < profile.duration:
@@ -327,7 +345,7 @@ async def run(args, cfg):
                     stats.no_endpoint += 1
                     writer.writerow([f"{time.time():.4f}", "", model, "", "", "",
                                      "no_endpoint", ""])
-                elif len(tasks) >= args.max_inflight:
+                elif len(tasks) >= max_inflight:
                     # Client-side backpressure: recorded, not silently skipped,
                     # because it means the offered load wasn't actually sent.
                     stats.dropped += 1
@@ -345,11 +363,120 @@ async def run(args, cfg):
                 await asyncio.wait(tasks, timeout=REQUEST_TIMEOUT_S)
             for b in background:
                 b.cancel()
-            meta["end"] = time.time()
-            with open(os.path.join(run_dir, "meta.json"), "w") as f:
-                json.dump(meta, f, indent=2)
             csv_file.close()
             await pool.close()
+
+
+def worker_main(*args):
+    """Process entry point for run_worker."""
+    try:
+        asyncio.run(run_worker(*args))
+    except KeyboardInterrupt:
+        pass
+
+
+def run(args, cfg):
+    """
+    Start the worker processes, print their combined progress, then merge
+    their CSVs into requests.csv and write meta.json.
+    """
+    profile = Profile(cfg, args.scale or cfg.get("scale", 1.0), args.seed)
+    n = args.workers or max(1, math.ceil(profile.peak() / WORKER_MAX_RATE))
+
+    name = os.path.splitext(os.path.basename(args.profile))[0]
+    run_dir = os.path.join(OUTPUT_DIR, f"{name}-{datetime.now():%Y%m%d-%H%M%S}")
+    os.makedirs(run_dir, exist_ok=True)
+
+    # spawn, not fork: gRPC does not survive a fork after it was imported.
+    ctx = mp.get_context("spawn")
+    events, go, start_wall = ctx.Queue(), ctx.Event(), ctx.Value("d", 0.0)
+    procs = [ctx.Process(target=worker_main,
+                         args=(args, cfg, i, n, run_dir, events, go, start_wall))
+             for i in range(n)]
+    for p in procs:
+        p.start()
+
+    meta = {
+        "profile": args.profile, "profile_cfg": cfg, "scale": profile.scale,
+        "model": cfg["model"], "seed": args.seed, "max_inflight": args.max_inflight,
+        "workers": n, "duration_s": profile.duration,
+    }
+    error = None
+    try:
+        ready = 0
+        while ready < n and error is None:
+            try:
+                kind, worker, msg = events.get(timeout=1)
+            except queue.Empty:
+                dead = [i for i, p in enumerate(procs) if not p.is_alive()]
+                if dead:
+                    error = f"error: worker {dead[0]} died during setup (see traceback above)"
+                continue
+            if kind == "error":
+                error = f"error (worker {worker}): {msg}"
+            ready += kind == "ready"
+        if error:
+            raise KeyboardInterrupt
+
+        start_wall.value = meta["start"] = time.time()
+        go.set()
+        print(f"Writing to {run_dir} ({profile.duration} s, scale={profile.scale}, "
+              f"workers={n})", flush=True)
+
+        ticks: dict[int, list[dict]] = {}
+        while any(p.is_alive() for p in procs):
+            try:
+                kind, worker, s = events.get(timeout=1)
+            except queue.Empty:
+                continue
+            if kind != "stats":
+                continue
+            ticks.setdefault(s["tick"], []).append(s)
+            if len(ticks[s["tick"]]) < n:
+                continue
+            parts = ticks.pop(s["tick"])
+            lat = sorted(l for p in parts for l in p["latencies"])
+            p50 = lat[len(lat) // 2] if lat else float("nan")
+            p99 = lat[int(len(lat) * 0.99)] if lat else float("nan")
+            t = time.time() - meta["start"]
+            total = {k: sum(p[k] for p in parts)
+                     for k in ("ok", "err", "dropped", "no_ep", "inflight")}
+            print(f"[{t:7.0f}s] target={profile.rate(t):6.1f}/s  "
+                  f"ok={total['ok'] / args.report_every:6.1f}/s  err={total['err']}  "
+                  f"dropped={total['dropped']}  no_ep={total['no_ep']}  "
+                  f"inflight={total['inflight']}  "
+                  f"endpoints={max(p['endpoints'] for p in parts)}  "
+                  f"p50={p50:.0f}ms p99={p99:.0f}ms", flush=True)
+    except KeyboardInterrupt:
+        # Ctrl-C reaches the workers too; let them finish their CSVs. Workers
+        # still waiting for the start signal are released and end at once.
+        go.set()
+    finally:
+        # A worker only exits once its queued events are read, so keep reading.
+        while any(p.is_alive() for p in procs):
+            try:
+                while True:
+                    events.get_nowait()
+            except queue.Empty:
+                pass
+            for p in procs:
+                p.join(timeout=0.1)
+
+    if error or "start" not in meta:
+        shutil.rmtree(run_dir)
+        sys.exit(error or "interrupted before the start")
+
+    meta["end"] = time.time()
+    with open(os.path.join(run_dir, "meta.json"), "w") as f:
+        json.dump(meta, f, indent=2)
+    with open(os.path.join(run_dir, "requests.csv"), "w") as out:
+        out.write(",".join(FIELDS) + "\n")
+        for i in range(n):
+            part = os.path.join(run_dir, f"requests.{i}.csv")
+            with open(part) as f:
+                f.readline()  # header
+                shutil.copyfileobj(f, out)
+            os.remove(part)
     print(f"Done → {run_dir}")
 
 
@@ -416,7 +543,10 @@ def main():
     p.add_argument("profile", nargs="?", help="profile YAML (see profiles/)")
     p.add_argument("--endpoints", default=DEFAULT_ENDPOINTS)
     p.add_argument("--scale", type=float, help="override the profile's rate scale")
-    p.add_argument("--max-inflight", type=int, default=512)
+    p.add_argument("--max-inflight", type=int, default=512,
+                   help="in-flight cap over all workers")
+    p.add_argument("--workers", type=int,
+                   help=f"sender processes (default: peak rate / {WORKER_MAX_RATE})")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--report-every", type=float, default=10.0)
     p.add_argument("--sanity", action="store_true", help="E0: one request per endpoint")
@@ -431,10 +561,7 @@ def main():
         p.error("a profile is required unless --sanity is given")
     with open(args.profile) as f:
         cfg = yaml.safe_load(f)
-    try:
-        asyncio.run(run(args, cfg))
-    except KeyboardInterrupt:
-        pass
+    run(args, cfg)
 
 
 if __name__ == "__main__":

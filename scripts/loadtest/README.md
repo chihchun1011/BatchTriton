@@ -3,9 +3,7 @@
 Drive the TARDIS-managed Tritons with real inference requests. Before you run anything, remove `simulated_utilisation_file` from `configuration/cobald_htc.yml`. Otherwise
 TARDIS ignores the real metrics.
 
-Model: `particlenet_AK4_PT`. The ONNX models in the CMSSW repository fail on the
-V100 nodes (`cudaErrorNoKernelImageForDevice` with the `tritonserver:24.11`
-onnxruntime). Only the `pytorch_libtorch` models (`*_PT`) work there.
+Default Model: `particlenet_AK4_PT`.
 
 ## Run order
 
@@ -29,7 +27,7 @@ python loadgen.py --sanity
 ### E1: calibration (capacity of one drone)
 
 `calibrate.sh` runs `perf_analyzer` against one drone in a closed loop: N
-clients each keep one request in flight, for N = 1, 2, 4 … 64. perf_analyzer
+clients each keep one request in flight, for N = 1, 2, 4 … 64. `perf_analyzer`
 measures each step in 30 s windows until 3 windows agree within 10 %. The
 sweep runs 5 times, and the plot shows the mean ± std between runs.
 Every request carries 20 jets (50 PF candidates, 5 SVs). The sweep records
@@ -46,8 +44,7 @@ Stop TARDIS once the drone is up, so that nothing scales during the sweep.
 python ../plotting/plot_calibration.py ../../output/loadtest/calibration-<ts>
 ```
 
-Then set `scale:` in `profiles/e*.yaml` to C, or pass `--scale <C>`. The run
-on 2026-10-21 (one V100) gave C ≈ 1,282 req/s at N = 16, with GPU utilisation 0.82.
+Then set `scale:` in `profiles/e*.yaml` to C, or pass `--scale <C>`. 
 
 ![E1 calibration at N = 16: requests travel from the clients through the server queue to the GPU](img/e1_calibration.gif)
 
@@ -58,9 +55,13 @@ on 2026-10-21 (one V100) gave C ≈ 1,282 req/s at N = 16, with GPU utilisation 
 units of C. TARDIS must be running. Each run checks that the number of drones
 follows the load.
 
+One Python process can only send ~1,100 req/s (less than one drone's C), so
+`loadgen.py` splits the rate over several sender processes, one per 600 req/s
+of the profile's peak (E2: 5). Override with `--workers N`.
+
 | Run | Profile | Load (× C) | Checks |
 |---|---|---|---|
-| E2 step | `e2_step.yaml` | 0.3 for 5 min → 2.5 for 15 min → 0.3 for 15 min | scale-up to 3 drones, then scale-down |
+| E2 step | `e2_step.yaml` | 0.3 for 4 min → 2.2 for 5 min → 0.3 for 4 min | scale-up to 3 drones, then scale-down |
 | E3 ramp | `e3_ramp.yaml` | 0 → 3 over 20 min, then 3 → 0 over 20 min | the drone count tracks a slow change |
 | E4 random | `e4_random.yaml` | random walk in 0.1–3 for 40 min, plus a 2× burst of 20 s every 5 min | stability under noisy load and short bursts |
 
